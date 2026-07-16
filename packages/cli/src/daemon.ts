@@ -4,6 +4,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  realpathSync,
   renameSync,
   statSync,
   unlinkSync,
@@ -19,17 +20,44 @@ const LABEL = `app.${BRAND.cliName}.sync`;
 const INTERVAL_SEC = 30 * 60;
 const MAX_LOG_BYTES = 2 * 1024 * 1024;
 
+type ManagedCliSourceOptions = {
+  fileExists?: (file: string) => boolean;
+  realpath?: (file: string) => string;
+};
+
 function nodeBin(): string {
   return process.execPath;
 }
 
-function managedCliEntry(): string {
-  const destination = path.join(CONFIG_DIR, "cli.mjs");
-  const source = process.argv[1] ? path.resolve(process.argv[1]) : "";
-  if (source === destination) return destination;
-  if (!source || !existsSync(source) || !/\.(?:m?js|cjs)$/.test(source)) {
+export function resolveManagedCliSource(
+  argvEntry = process.argv[1] ?? "",
+  options: ManagedCliSourceOptions = {},
+): string {
+  const fileExists = options.fileExists ?? existsSync;
+  const resolveRealpath = options.realpath ?? realpathSync;
+  const requested = argvEntry ? path.resolve(argvEntry) : "";
+  if (!requested || !fileExists(requested)) {
     throw new Error("The background collector requires the bundled Burn CLI. Re-run the install instruction from the app.");
   }
+
+  let source: string;
+  try {
+    // npm and npx invoke package binaries through an extensionless `.bin`
+    // symlink. Resolve it before checking the bundled JavaScript entrypoint.
+    source = resolveRealpath(requested);
+  } catch {
+    throw new Error("The background collector requires the bundled Burn CLI. Re-run the install instruction from the app.");
+  }
+  if (!/\.(?:m?js|cjs)$/.test(source)) {
+    throw new Error("The background collector requires the bundled Burn CLI. Re-run the install instruction from the app.");
+  }
+  return source;
+}
+
+function managedCliEntry(): string {
+  const destination = path.join(CONFIG_DIR, "cli.mjs");
+  const source = resolveManagedCliSource();
+  if (source === destination) return destination;
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
   copyFileSync(source, destination);
   chmodSync(destination, 0o700);

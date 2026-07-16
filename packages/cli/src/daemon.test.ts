@@ -1,7 +1,27 @@
 import { describe, expect, test } from "bun:test";
-import { renderLaunchdPlist, renderSystemdService, renderSystemdTimer, windowsTaskArguments } from "./daemon";
+import {
+  renderLaunchdPlist,
+  renderSystemdService,
+  renderSystemdTimer,
+  resolveManagedCliSource,
+  windowsTaskArguments,
+} from "./daemon";
 
 describe("collector daemon definitions", () => {
+  test("resolves the extensionless npm bin symlink to the bundled CLI", () => {
+    expect(resolveManagedCliSource("/tmp/node_modules/.bin/joinburn", {
+      fileExists: () => true,
+      realpath: () => "/tmp/node_modules/joinburn/dist/cli.js",
+    })).toBe("/tmp/node_modules/joinburn/dist/cli.js");
+  });
+
+  test("rejects a launcher that does not resolve to bundled JavaScript", () => {
+    expect(() => resolveManagedCliSource("/tmp/node_modules/.bin/joinburn", {
+      fileExists: () => true,
+      realpath: () => "/tmp/node_modules/joinburn/bin/native",
+    })).toThrow("requires the bundled Burn CLI");
+  });
+
   test("launchd runs the managed collector every 30 minutes without shell interpolation", () => {
     const plist = renderLaunchdPlist({
       node: "/Users/Burn & Team/node",
