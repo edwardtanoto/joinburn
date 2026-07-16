@@ -9,7 +9,7 @@ import {
   type DailyUsageRow,
   type Provider,
   type ProviderSnapshot,
-} from "@burnrate/shared";
+} from "@joinburn/shared";
 import { CONFIG_DIR } from "../config";
 import { normalizeUsageDate } from "../usage";
 import ccusagePackageLock from "./ccusage-package-lock.json";

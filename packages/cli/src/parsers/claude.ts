@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { costUsd, type DailyUsageRow, type ProviderSnapshot } from "@burnrate/shared";
+import { costUsd, type DailyUsageRow, type ProviderSnapshot } from "@joinburn/shared";
 import { normalizeUsageDate } from "../usage";
 
 const STATS_CACHE = path.join(os.homedir(), ".claude", "stats-cache.json");

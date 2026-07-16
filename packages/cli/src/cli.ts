@@ -11,7 +11,7 @@ import {
   type PairResponse,
   type Provider,
   type ProviderSnapshot,
-} from "@burnrate/shared";
+} from "@joinburn/shared";
 import { CONFIG_PATH, loadConfig, saveConfig, type CollectorConfig } from "./config";
 import { installDaemon, rotateDaemonLogs, uninstallDaemon } from "./daemon";
 import { postJson } from "./http";

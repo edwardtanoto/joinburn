@@ -1,4 +1,4 @@
-import type { DailyUsageRow, ProviderSnapshot } from "@burnrate/shared";
+import type { DailyUsageRow, ProviderSnapshot } from "@joinburn/shared";
 
 /** Convert a date or ISO timestamp to the aggregate wire format. */
 export function normalizeUsageDate(value: unknown): string | null {

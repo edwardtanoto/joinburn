@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { BRAND, type Provider } from "@burnrate/shared";
+import { BRAND, type Provider } from "@joinburn/shared";
 
 export type CollectorConfig = {
   apiBase: string;

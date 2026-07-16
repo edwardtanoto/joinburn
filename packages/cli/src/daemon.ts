@@ -12,7 +12,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { BRAND } from "@burnrate/shared";
+import { BRAND } from "@joinburn/shared";
 import { CONFIG_DIR } from "./config";
 
 const LABEL = `app.${BRAND.cliName}.sync`;
