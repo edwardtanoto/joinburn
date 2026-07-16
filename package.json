@@ -13,7 +13,7 @@
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun test packages/cli/src",
     "check": "bun run typecheck && bun run test && bun run build",
-    "prepare": "npm run build --workspace joinburn"
+    "prepare": "cd packages/cli && npm run build"
   },
   "engines": {
     "node": ">=20.9"
