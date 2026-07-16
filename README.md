@@ -66,8 +66,11 @@ from prompt text.
 # Pair, perform the first aggregate-only sync, and install the daemon
 npx --yes joinburn@latest connect --code ABC-123
 
-# Inspect connection and sync health
-npx --yes joinburn@latest status
+# Inspect connection, parser, and scheduler health
+npx --yes joinburn@latest doctor
+
+# Repair the parser and scheduler, then run a full aggregate sync
+npx --yes joinburn@latest repair
 
 # Run an immediate sync
 npx --yes joinburn@latest sync
@@ -79,6 +82,10 @@ npx --yes joinburn@latest daemon uninstall
 Pairing codes are single-use and expire after 15 minutes. `connect` stores the
 device credential with owner-only filesystem permissions under
 `~/.burnstats/config.json`.
+
+Health reports sent to Burn contain only categorical state: scheduler status,
+parser status, detected agent names, collector version, and a normalized error
+code. Raw error strings and local paths stay on the machine.
 
 ## Development
 

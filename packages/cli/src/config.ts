@@ -1,7 +1,12 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { BRAND, type Provider } from "@joinburn/shared";
+import {
+  BRAND,
+  type CollectorErrorCode,
+  type CollectorParserState,
+  type Provider,
+} from "@joinburn/shared";
 
 export type CollectorConfig = {
   apiBase: string;
@@ -12,11 +17,14 @@ export type CollectorConfig = {
   lastSyncAt?: string | null;
   lastFullSyncAt?: string | null;
   lastError?: string | null;
+  lastErrorCode?: CollectorErrorCode | null;
   lastErrorAt?: string | null;
   consecutiveFailures?: number;
   ccusageVersion?: string | null;
   ccusageInstallAttemptAt?: string | null;
   detectedProviders?: Provider[];
+  parserState?: CollectorParserState;
+  schedulerMode?: "managed" | "manual";
   lastUpdateCheckAt?: string | null;
 };
 

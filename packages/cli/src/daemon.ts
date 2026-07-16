@@ -13,12 +13,18 @@ import {
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { BRAND } from "@joinburn/shared";
+import { BRAND, type CollectorSchedulerState } from "@joinburn/shared";
 import { CONFIG_DIR } from "./config";
 
 const LABEL = `app.${BRAND.cliName}.sync`;
 const INTERVAL_SEC = 30 * 60;
 const MAX_LOG_BYTES = 2 * 1024 * 1024;
+
+type DaemonInspectionOptions = {
+  platform?: NodeJS.Platform;
+  fileExists?: (file: string) => boolean;
+  run?: (command: string, args: string[]) => boolean;
+};
 
 type ManagedCliSourceOptions = {
   fileExists?: (file: string) => boolean;
@@ -121,6 +127,35 @@ export function renderSystemdTimer(): string {
 export function windowsTaskArguments(node: string, entry: string): string[] {
   const command = `"${node}" "${entry}" sync`;
   return ["/Create", "/F", "/SC", "MINUTE", "/MO", "30", "/TN", LABEL, "/TR", command];
+}
+
+function commandSucceeds(command: string, args: string[]): boolean {
+  try {
+    execFileSync(command, args, { stdio: "ignore", timeout: 3_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Inspect the installed scheduler without changing it. */
+export function inspectDaemonState(options: DaemonInspectionOptions = {}): CollectorSchedulerState {
+  const platform = options.platform ?? os.platform();
+  const fileExists = options.fileExists ?? existsSync;
+  const run = options.run ?? commandSucceeds;
+
+  if (platform === "darwin") {
+    if (!fileExists(plistPath())) return "missing";
+    return run("launchctl", ["print", `${launchdDomain()}/${LABEL}`]) ? "active" : "missing";
+  }
+  if (platform === "linux") {
+    if (!fileExists(path.join(systemdDir(), `${LABEL}.timer`))) return "missing";
+    return run("systemctl", ["--user", "is-active", "--quiet", `${LABEL}.timer`]) ? "active" : "missing";
+  }
+  if (platform === "win32") {
+    return run("schtasks.exe", ["/Query", "/TN", LABEL]) ? "active" : "missing";
+  }
+  return "unknown";
 }
 
 export function rotateDaemonLogs(): void {

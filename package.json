@@ -1,7 +1,7 @@
 {
   "name": "joinburn-cli",
   "private": true,
-  "version": "0.2.4",
+  "version": "0.3.0",
   "description": "Open-source collector and pairing CLI for Burn",
   "license": "MIT",
   "bin": {
