@@ -7,6 +7,7 @@ import {
   COLLECTOR_VERSION,
   MAX_INGEST_ROWS,
   type DailyUsageRow,
+  type CollectorParserState,
   type IngestPayload,
   type PairResponse,
   type Provider,
@@ -14,6 +15,11 @@ import {
 } from "@joinburn/shared";
 import { CONFIG_PATH, loadConfig, saveConfig, type CollectorConfig } from "./config";
 import { installDaemon, rotateDaemonLogs, uninstallDaemon } from "./daemon";
+import {
+  classifyCollectorError,
+  collectorDoctorResult,
+  collectorStatusReport,
+} from "./diagnostics";
 import { postJson } from "./http";
 import { acquireSyncLock } from "./lock";
 import { CCUSAGE_VERSION, ensureCcusageInstalled, isCcusageTrusted, parseCcusage } from "./parsers/ccusage";
@@ -106,18 +112,28 @@ function replaceSnapshot(snapshots: ProviderSnapshot[], replacement: ProviderSna
 }
 
 async function prepareCcusage(cfg: CollectorConfig): Promise<CollectorConfig> {
-  if (cfg.ccusageVersion === CCUSAGE_VERSION && (await isCcusageTrusted())) return cfg;
+  if (cfg.ccusageVersion === CCUSAGE_VERSION && (await isCcusageTrusted())) {
+    if (cfg.parserState === "ready") return cfg;
+    const next = { ...cfg, parserState: "ready" as const };
+    saveConfig(next);
+    return next;
+  }
   const attemptedAt = cfg.ccusageInstallAttemptAt ? Date.parse(cfg.ccusageInstallAttemptAt) : 0;
   if (Number.isFinite(attemptedAt) && Date.now() - attemptedAt < CCUSAGE_INSTALL_RETRY_MS) return cfg;
   const now = new Date().toISOString();
   try {
     await ensureCcusageInstalled();
-    const next = { ...cfg, ccusageVersion: CCUSAGE_VERSION, ccusageInstallAttemptAt: now };
+    const next = {
+      ...cfg,
+      ccusageVersion: CCUSAGE_VERSION,
+      ccusageInstallAttemptAt: now,
+      parserState: "ready" as const,
+    };
     saveConfig(next);
     console.log(`✓ multi-agent parser ${CCUSAGE_VERSION} ready`);
     return next;
   } catch (error) {
-    const next = { ...cfg, ccusageInstallAttemptAt: now };
+    const next = { ...cfg, ccusageInstallAttemptAt: now, parserState: "install_failed" as const };
     saveConfig(next);
     console.warn(`  (ccusage install failed; retrying tomorrow: ${(error as Error).message})`);
     return next;
@@ -131,9 +147,14 @@ function ensureInstallationId(cfg: CollectorConfig): CollectorConfig {
   return next;
 }
 
-type Collection = { rows: DailyUsageRow[]; snapshots: ProviderSnapshot[]; sources: Provider[] };
+type Collection = {
+  rows: DailyUsageRow[];
+  snapshots: ProviderSnapshot[];
+  sources: Provider[];
+  parserState: CollectorParserState;
+};
 
-async function collectAll(sinceDate?: string): Promise<Collection> {
+async function collectAll(sinceDate?: string, expectedParserState: CollectorParserState = "unknown"): Promise<Collection> {
   const legacy = await collectLegacy(sinceDate);
   try {
     const ccusage = await parseCcusage(sinceDate);
@@ -144,10 +165,19 @@ async function collectAll(sinceDate?: string): Promise<Collection> {
       for (const snapshot of legacy.snapshots) replaceSnapshot(snapshots, snapshot);
       const sources = [...new Set(ccusage.rows.map((row) => row.provider))] as Provider[];
       console.log(`  ccusage ${CCUSAGE_VERSION}: ${sources.join(", ")}`);
-      return { rows: mergeUsageRows(ccusage.rows), snapshots, sources };
+      return { rows: mergeUsageRows(ccusage.rows), snapshots, sources, parserState: "ready" };
+    }
+    if (ccusage) {
+      return {
+        rows: mergeUsageRows(legacy.rows),
+        snapshots: legacy.snapshots,
+        sources: [...new Set(legacy.rows.map((row) => row.provider))],
+        parserState: "ready",
+      };
     }
   } catch (error) {
     console.warn(`  (ccusage failed, using built-in Claude/Codex fallback: ${(error as Error).message})`);
+    expectedParserState = "fallback";
   }
 
   if (!legacy.rows.length) console.log("  (no supported local agent history found)");
@@ -155,20 +185,52 @@ async function collectAll(sinceDate?: string): Promise<Collection> {
     rows: mergeUsageRows(legacy.rows),
     snapshots: legacy.snapshots,
     sources: [...new Set(legacy.rows.map((row) => row.provider))],
+    parserState: expectedParserState === "install_failed" ? "install_failed" : "fallback",
   };
+}
+
+async function reportCollectorState(
+  cfg: CollectorConfig,
+  state: "attempt" | "failed",
+  error?: unknown,
+  overrides?: Parameters<typeof collectorStatusReport>[3],
+): Promise<void> {
+  const report = await collectorStatusReport(cfg, state, error, overrides);
+  await postJson(cfg.apiBase, "/v1/collector/status", report, cfg.deviceToken, { attempts: 2, timeoutMs: 10_000 });
+}
+
+async function reportCollectorStateBestEffort(
+  cfg: CollectorConfig,
+  state: "attempt" | "failed",
+  error?: unknown,
+  overrides?: Parameters<typeof collectorStatusReport>[3],
+): Promise<void> {
+  try {
+    await reportCollectorState(cfg, state, error, overrides);
+  } catch {
+    console.warn("  (collector health report unavailable; sync continues)");
+  }
 }
 
 async function syncOnce(cfg: CollectorConfig, full: boolean): Promise<number> {
   const lastFullSync = cfg.lastFullSyncAt ? Date.parse(cfg.lastFullSyncAt) : 0;
   let effectiveFull = full || !Number.isFinite(lastFullSync) || Date.now() - lastFullSync >= FULL_RESCAN_INTERVAL_MS;
-  let collection = await collectAll(effectiveFull ? undefined : cfg.lastSyncDate ?? undefined);
+  let collection = await collectAll(
+    effectiveFull ? undefined : cfg.lastSyncDate ?? undefined,
+    cfg.parserState,
+  );
   const knownSources = new Set(cfg.detectedProviders ?? []);
   const discoveredSource = !effectiveFull && collection.sources.some((source) => !knownSources.has(source));
   if (discoveredSource) {
     console.log("  new agent source detected — backfilling its full history");
     effectiveFull = true;
-    collection = await collectAll();
+    collection = await collectAll(undefined, cfg.parserState);
   }
+  const detectedProviders = [...new Set([...(cfg.detectedProviders ?? []), ...collection.sources])];
+  await reportCollectorStateBestEffort(cfg, "attempt", undefined, {
+    parserState: collection.parserState,
+    detectedProviders,
+  });
   // Incremental: resend the last synced day too (it may have grown), plus
   // anything newer. Upserts are idempotent so overlap is safe.
   const since = !effectiveFull && cfg.lastSyncDate ? cfg.lastSyncDate : "0000-00-00";
@@ -204,9 +266,11 @@ async function syncOnce(cfg: CollectorConfig, full: boolean): Promise<number> {
     lastSyncAt: new Date().toISOString(),
     lastFullSyncAt: effectiveFull ? new Date().toISOString() : cfg.lastFullSyncAt ?? null,
     lastError: null,
+    lastErrorCode: null,
     lastErrorAt: null,
     consecutiveFailures: 0,
-    detectedProviders: [...new Set([...(cfg.detectedProviders ?? []), ...collection.sources])],
+    detectedProviders,
+    parserState: collection.parserState,
   });
   return pending.length;
 }
@@ -256,6 +320,8 @@ async function cmdConnect(flags: Map<string, string>) {
     ccusageVersion: ccusageReady ? CCUSAGE_VERSION : null,
     ccusageInstallAttemptAt: new Date().toISOString(),
     detectedProviders: [],
+    parserState: ccusageReady ? "ready" : "install_failed",
+    schedulerMode: flags.get("no-daemon") === "true" ? "manual" : "managed",
   };
   saveConfig(cfg);
   console.log(`✓ paired as @${pair.username} (device: ${os.hostname()})`);
@@ -265,7 +331,33 @@ async function cmdConnect(flags: Map<string, string>) {
   console.log(`✓ first sync: ${n} day-rows uploaded`);
 
   if (flags.get("no-daemon") !== "true") {
-    console.log(`✓ ${installDaemon()}`);
+    try {
+      const installed = installDaemon();
+      const current = loadConfig() ?? cfg;
+      const healthy = {
+        ...current,
+        schedulerMode: "managed" as const,
+        lastError: null,
+        lastErrorCode: null,
+        lastErrorAt: null,
+      };
+      saveConfig(healthy);
+      await reportCollectorStateBestEffort(healthy, "attempt");
+      console.log(`✓ ${installed}`);
+    } catch (error) {
+      const current = loadConfig() ?? cfg;
+      const failed = {
+        ...current,
+        schedulerMode: "managed" as const,
+        lastError: (error as Error).message,
+        lastErrorCode: classifyCollectorError(error),
+        lastErrorAt: new Date().toISOString(),
+        consecutiveFailures: (current.consecutiveFailures ?? 0) + 1,
+      };
+      saveConfig(failed);
+      await reportCollectorStateBestEffort(failed, "failed", error);
+      throw error;
+    }
   }
   console.log(`\nDone. Profile is live — open the ${BRAND.displayName} app.`);
 }
@@ -283,6 +375,7 @@ async function cmdSync(flags: Map<string, string>) {
   }
   try {
     const cfg = await prepareCcusage(ensureInstallationId(loaded));
+    await reportCollectorStateBestEffort(cfg, "attempt");
     const updated = await maybeUpdateCollector(cfg, VERSION).catch((error) => {
       console.warn(`  (collector update check failed: ${(error as Error).message})`);
       return false;
@@ -297,9 +390,11 @@ async function cmdSync(flags: Map<string, string>) {
     saveConfig({
       ...current,
       lastError: message,
+      lastErrorCode: classifyCollectorError(e),
       lastErrorAt: new Date().toISOString(),
       consecutiveFailures: (current.consecutiveFailures ?? 0) + 1,
     });
+    await reportCollectorStateBestEffort(current, "failed", e);
     console.error(`sync failed: ${message}`);
     process.exitCode = 1;
   } finally {
@@ -307,17 +402,95 @@ async function cmdSync(flags: Map<string, string>) {
   }
 }
 
-function cmdStatus() {
+async function cmdStatus(flags: Map<string, string>) {
   const cfg = loadConfig();
-  if (!cfg) {
-    console.log(`not connected (no ${CONFIG_PATH})`);
+  const report = await collectorDoctorResult(cfg);
+  if (flags.get("json") === "true") {
+    console.log(JSON.stringify(report, null, 2));
     return;
   }
-  console.log(`user:       @${cfg.username}`);
-  console.log(`api:        ${cfg.apiBase}`);
-  console.log(`last sync:  ${cfg.lastSyncAt ?? cfg.lastSyncDate ?? "never"}`);
-  if (cfg.lastError) console.log(`last error: ${cfg.lastErrorAt ?? "unknown time"} — ${cfg.lastError}`);
-  if (cfg.consecutiveFailures) console.log(`failures:   ${cfg.consecutiveFailures} consecutive attempt(s)`);
+  if (!cfg) console.log(`not connected (no ${CONFIG_PATH})`);
+  else console.log(`user:       @${cfg.username}`);
+  console.log(`api:        ${report.apiBase ?? "not configured"}`);
+  console.log(`connection: ${report.apiState}`);
+  console.log(`last sync:  ${report.lastSyncAt ?? "never"}`);
+  console.log(`scheduler:  ${report.schedulerState}`);
+  console.log(`parser:     ${report.parserState}`);
+  console.log(`agents:     ${report.detectedProviders.join(", ") || "none detected"}`);
+  if (report.lastErrorCode) console.log(`last issue: ${report.lastErrorCode}`);
+  if (cfg?.consecutiveFailures) console.log(`failures:   ${cfg.consecutiveFailures} consecutive attempt(s)`);
+  if (report.recommendedAction === "reconnect") {
+    console.log("next:       open Burn → Settings → Collector, create a fresh code, then reconnect");
+    console.log(`command:    ${report.command}`);
+  } else if (report.command) {
+    console.log(`${report.recommendedAction}:     ${report.command}`);
+  }
+}
+
+async function cmdRepair(flags: Map<string, string>) {
+  const loaded = loadConfig();
+  if (!loaded) {
+    console.error(`Not connected. Open Burn, create a pairing code, then run: ${CLI_COMMAND} connect --code XXX-NNN`);
+    process.exitCode = 1;
+    return;
+  }
+  const releaseLock = acquireSyncLock();
+  if (!releaseLock) {
+    console.log("sync already running; wait a moment, then run repair again");
+    return;
+  }
+
+  try {
+    console.log("→ verifying the multi-agent parser …");
+    await ensureCcusageInstalled();
+    let cfg: CollectorConfig = {
+      ...ensureInstallationId(loaded),
+      ccusageVersion: CCUSAGE_VERSION,
+      ccusageInstallAttemptAt: new Date().toISOString(),
+      parserState: "ready",
+      schedulerMode: flags.get("no-daemon") === "true" ? "manual" : "managed",
+    };
+    saveConfig(cfg);
+    console.log(`✓ multi-agent parser ${CCUSAGE_VERSION} verified`);
+
+    if (cfg.schedulerMode === "managed") {
+      console.log("→ reinstalling background sync …");
+      console.log(`✓ ${installDaemon()}`);
+      cfg = loadConfig() ?? cfg;
+    } else {
+      console.log("✓ manual sync mode preserved (--no-daemon)");
+    }
+
+    await reportCollectorStateBestEffort(cfg, "attempt");
+    console.log("→ running a full aggregate sync …");
+    const rows = await syncOnce(cfg, true);
+    console.log(`✓ repaired and synced ${rows} day-rows for @${cfg.username}`);
+    await cmdStatus(new Map());
+  } catch (error) {
+    const current = loadConfig() ?? loaded;
+    const code = classifyCollectorError(error);
+    saveConfig({
+      ...current,
+      lastError: (error as Error).message,
+      lastErrorCode: code,
+      lastErrorAt: new Date().toISOString(),
+      consecutiveFailures: (current.consecutiveFailures ?? 0) + 1,
+    });
+    await reportCollectorStateBestEffort(current, "failed", error);
+    if (code === "authentication") {
+      console.error("repair stopped: this collector is no longer authorized. Open Burn → Settings → Collector and reconnect this machine.");
+    } else {
+      console.error(`repair failed (${code}): ${(error as Error).message}`);
+    }
+    process.exitCode = 1;
+  } finally {
+    releaseLock();
+  }
+}
+
+function setSchedulerMode(mode: "managed" | "manual") {
+  const config = loadConfig();
+  if (config) saveConfig({ ...config, schedulerMode: mode });
 }
 
 async function main() {
@@ -327,16 +500,25 @@ async function main() {
   try {
     if (c0 === "connect") await cmdConnect(flags);
     else if (c0 === "sync") await cmdSync(flags);
-    else if (c0 === "status") cmdStatus();
-    else if (c0 === "daemon" && c1 === "install") console.log(installDaemon());
-    else if (c0 === "daemon" && c1 === "uninstall") console.log(uninstallDaemon());
+    else if (c0 === "status" || c0 === "doctor") await cmdStatus(flags);
+    else if (c0 === "repair") await cmdRepair(flags);
+    else if (c0 === "daemon" && c1 === "install") {
+      console.log(installDaemon());
+      setSchedulerMode("managed");
+    }
+    else if (c0 === "daemon" && c1 === "uninstall") {
+      console.log(uninstallDaemon());
+      setSchedulerMode("manual");
+    }
     else {
       console.log(`${BRAND.displayName} collector v${VERSION} — aggregates only, never content`);
       console.log(`
 usage:
   ${CLI_COMMAND} connect --code XXX-NNN   pair this machine + first sync + daemon
   ${CLI_COMMAND} sync [--full]            sync now (daemon runs this)
-  ${CLI_COMMAND} status                   show link state
+  ${CLI_COMMAND} status [--json]          diagnose link, parser, and scheduler
+  ${CLI_COMMAND} doctor [--json]          alias for status
+  ${CLI_COMMAND} repair [--no-daemon]     verify parser + daemon + full sync
   ${CLI_COMMAND} daemon install           (re)install the 30-min sync daemon
   ${CLI_COMMAND} daemon uninstall         remove the daemon
 

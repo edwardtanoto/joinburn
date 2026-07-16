@@ -12,5 +12,5 @@ export const BRAND = {
 
 export const PRODUCTION_AGENT_GUIDE_URL = `https://${BRAND.domain}/agents.md`;
 
-export const COLLECTOR_VERSION = "0.2.4";
+export const COLLECTOR_VERSION = "0.3.0";
 export const TERMS_VERSION = "2026-07-15";

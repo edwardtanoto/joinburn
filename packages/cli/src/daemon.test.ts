@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  inspectDaemonState,
   renderLaunchdPlist,
   renderSystemdService,
   renderSystemdTimer,
@@ -62,5 +63,18 @@ describe("collector daemon definitions", () => {
       "/TR",
       '"C:\\Program Files\\node.exe" "C:\\Users\\Burn User\\.burnstats\\cli.mjs" sync',
     ]);
+  });
+
+  test("reports active only when the scheduler definition exists and is loaded", () => {
+    const calls: string[] = [];
+    const run = (command: string, args: string[]) => {
+      calls.push([command, ...args].join(" "));
+      return true;
+    };
+
+    expect(inspectDaemonState({ platform: "darwin", fileExists: () => true, run })).toBe("active");
+    expect(calls[0]).toContain("launchctl print gui/");
+    expect(inspectDaemonState({ platform: "linux", fileExists: () => false, run })).toBe("missing");
+    expect(inspectDaemonState({ platform: "freebsd", fileExists: () => true, run })).toBe("unknown");
   });
 });

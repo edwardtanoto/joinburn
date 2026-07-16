@@ -13,3 +13,10 @@ code, paths, project names, or session content.
 
 Full source, privacy documentation, and release provenance:
 https://github.com/edwardtanoto/joinburn
+
+Useful diagnostics:
+
+```bash
+npx --yes joinburn@latest doctor
+npx --yes joinburn@latest repair
+```

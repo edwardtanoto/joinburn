@@ -15,6 +15,10 @@ Each upload row may contain:
 - aggregate message and session counts;
 - collector version and provider-level aggregate metadata.
 
+Collector health reports may also contain the scheduler state, parser state,
+detected agent identifiers, and a categorical error code such as `network` or
+`authentication`. They never include the raw error message or a local path.
+
 ## Data that must never be sent
 
 - prompts or responses;
