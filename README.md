@@ -4,8 +4,12 @@ The open-source collector and pairing CLI for [Burn](https://joinburn.app), an
 activity network for people who work with AI agents.
 
 ```bash
-npx --yes joinburn@latest connect --code <PAIRING_CODE>
+npm exec --yes --package=github:edwardtanoto/joinburn#v0.2.3 -- joinburn connect --code <PAIRING_CODE>
 ```
+
+That command runs the tagged public source directly. The shorter
+`npx --yes joinburn@latest ...` form will become the default after the one-time
+npm Trusted Publishing setup is complete.
 
 `joinburn` pairs a machine to a Burn account, reads local aggregate usage from
 supported coding agents, sends only the normalized aggregate rows described
@@ -64,16 +68,16 @@ from prompt text.
 
 ```bash
 # Pair, perform the first aggregate-only sync, and install the daemon
-npx --yes joinburn@latest connect --code ABC-123
+npm exec --yes --package=github:edwardtanoto/joinburn#v0.2.3 -- joinburn connect --code ABC-123
 
 # Inspect connection and sync health
-npx --yes joinburn@latest status
+npm exec --yes --package=github:edwardtanoto/joinburn#v0.2.3 -- joinburn status
 
 # Run an immediate sync
-npx --yes joinburn@latest sync
+npm exec --yes --package=github:edwardtanoto/joinburn#v0.2.3 -- joinburn sync
 
 # Remove the background daemon
-npx --yes joinburn@latest daemon uninstall
+npm exec --yes --package=github:edwardtanoto/joinburn#v0.2.3 -- joinburn daemon uninstall
 ```
 
 Pairing codes are single-use and expire after 15 minutes. `connect` stores the
