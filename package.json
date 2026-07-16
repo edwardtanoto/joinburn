@@ -4,12 +4,16 @@
   "version": "0.2.3",
   "description": "Open-source collector and pairing CLI for Burn",
   "license": "MIT",
+  "bin": {
+    "joinburn": "packages/cli/dist/cli.js"
+  },
   "workspaces": ["packages/*"],
   "scripts": {
     "build": "bun run --filter joinburn build",
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun test packages/cli/src",
-    "check": "bun run typecheck && bun run test && bun run build"
+    "check": "bun run typecheck && bun run test && bun run build",
+    "prepare": "npm run build --workspace joinburn"
   },
   "engines": {
     "node": ">=20.9"
