@@ -1,6 +1,6 @@
 {
   "name": "joinburn",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Collector CLI for Burn — syncs multi-agent usage aggregates. Aggregates only: never prompts, paths, or content.",
   "license": "MIT",
   "type": "module",

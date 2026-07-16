@@ -7,7 +7,7 @@
     },
     "packages/cli": {
       "name": "joinburn",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "bin": {
         "joinburn": "dist/cli.js",
       },
@@ -22,7 +22,7 @@
     },
     "packages/shared": {
       "name": "@joinburn/shared",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "devDependencies": {
         "typescript": "^5.6.0",
       },
