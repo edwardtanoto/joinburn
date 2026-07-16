@@ -30,7 +30,7 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "@joinburn/shared": "workspace:*",
+    "@joinburn/shared": "file:../shared",
     "@types/bun": "^1.1.14",
     "@types/node": "^22.0.0",
     "tsup": "^8.3.0",
